@@ -31,7 +31,7 @@ class MovieInfo(str, Enum):
     LANGUAGE = 'original_language'
     TITLE_ORIG = 'original_title'
     TITLE_CUR = 'title'
-    OVERVIEW = 'overview'
+    PLOT = 'overview'
     POPULARITY = 'popularity'
     PRODUCTION_COMPANY = 'production_companies'
     PRODUCTION_COUNTRY = 'production_countries'
@@ -67,9 +67,17 @@ class DatabaseEntry(str, Enum):
     CAST = 'cast'
 
 
-# class Images(Enum):
-#     MOVIE_POSTER = MovieInfo.POSTER
-#     MOVIE_BACKDROP =
+class Cast(str, Enum):
+    ADULT = 'adult'
+    GENDER = "gender"
+    PERSON_ID = "id"
+    KNOWN_FOR = "known_for_department"
+    NAME_NOW = "name"
+    NAME_BEFORE = "original_name"
+    POPULARITY = "popularity"
+    HEADSHOT = "profile_path"
+    CHARACTER_NAME = "character"
+
 
 keyable_info = (MovieInfo.ADULT, MovieInfo.GENRES)
 
@@ -83,6 +91,7 @@ class MovieDatabase:
         self.movies = self.db['movies']
         self.directories = self.db['directories']
         self.images = self.db['images']
+        self.cast = self.db['actors']
 
         self.config = configparser.ConfigParser()
         self.settings_path = None
@@ -109,13 +118,21 @@ class MovieDatabase:
 
     def add_movie(self, file_path: Path, force_update: bool = False):
         tmdb_id = get_tmdb_id(file_path)
+
+        if tmdb_id:
+            tmdb_id = int(tmdb_id)
+
         if self.movies.find_one({'_id': tmdb_id}) and not force_update:
             return
 
         # Extract TMDB ID and other metadata from the file
         media_info = get_track_info(file_path)
         if tmdb_id:
-            movie_info = make_tmdb_call(tmdb_id)
+            try:
+                the_id = int(tmdb_id)
+            except ValueError:
+                the_id = tmdb_id
+            movie_info = make_tmdb_call(the_id)
         else:
             movie_info = make_tmdb_call(str(file_path.name))
             tmdb_id = movie_info['id']
@@ -131,6 +148,8 @@ class MovieDatabase:
 
         cast = compile_cast(tmdb_id)
 
+        cast = self.insert_cast(cast)  # mutates cast to be a list of tuples containing the actor id and character name.
+
         # Get directory document
         directory = self.directories.find_one({"path": str(file_path.parent.absolute())})
 
@@ -144,18 +163,18 @@ class MovieDatabase:
         }
 
         for key in keyable_info:
-            data[key] = movie_info.pop(key)
+            data[key] = movie_info.pop(key)  # TODO need to fix genres
 
         data[DatabaseEntry.MISC_INFO] = movie_info
 
         # Add it to the database, update if already exists
-        self.movies.update_one({"_id": tmdb_id}, {"$set": data}, upsert=True)
+        self.movies.update_one({"_id": int(tmdb_id)}, {"$set": data}, upsert=True)
 
     def get_movie(self, movie: int | str) -> dict | None:
         if isinstance(movie, str):
             movie = get_tmdb_id(movie)
 
-        return self.movies.find_one({"_id": movie})
+        return self.movies.find_one({"_id": int(movie)})
 
     def insert_images(self, mov_id: int, imgs: dict):
         """
@@ -182,14 +201,61 @@ class MovieDatabase:
                 image = Image.open(BytesIO(response.content))
 
                 # Save the image to a file
-                image_name = Path(self.images_directory / f'{mov_id}_{image_kind}.jpg')
+                image_name = Path(self.images_directory / 'movies' / f'{mov_id}_{image_kind}.jpg')
                 image.save(image_name)
 
                 image_links[image_kind] = str(image_name)
 
         db_entry['images'] = image_links
 
-        self.images.update_one({'_id': mov_id}, {"$set": db_entry}, upsert=True)
+        self.images.update_one({'_id': int(mov_id)}, {"$set": db_entry}, upsert=True)
+
+    def get_images(self, movie: int | str) -> dict | None:
+        if isinstance(movie, str):
+            movie = get_tmdb_id(movie)
+
+        return self.images.find_one({"_id": movie})
+
+    def insert_cast(self, cast: list[dict]) -> list[tuple]:
+
+        cast_member_list = []
+        actor_image_dir = Path(self.images_directory / 'actors')
+        actor_image_dir.mkdir(exist_ok=True)
+
+        for cast_member in cast:
+            url = f'https://image.tmdb.org/t/p/original{cast_member[Cast.HEADSHOT.value]}'
+
+            response = requests.get(url)
+            if response.status_code == requests.codes.ok:
+                # Open the response content as an image using PIL
+                image = Image.open(BytesIO(response.content))
+
+                # Save the image to a file
+                image_name = Path(actor_image_dir / f'{cast_member["id"]}.jpg')
+                image.save(image_name)
+
+            else:
+                image_name = None
+
+            cast_entry = {
+                '_id': int(cast_member[Cast.PERSON_ID.value]),
+                Cast.ADULT: cast_member[Cast.ADULT.value],
+                Cast.GENDER: cast_member[Cast.GENDER.value],
+                Cast.KNOWN_FOR: cast_member[Cast.KNOWN_FOR.value],
+                Cast.NAME_NOW: cast_member[Cast.NAME_NOW.value],
+                Cast.NAME_BEFORE: cast_member[Cast.NAME_BEFORE.value],
+                Cast.POPULARITY: cast_member[Cast.POPULARITY.value],
+                Cast.HEADSHOT: str(image_name)
+            }
+
+            self.cast.update_one({'_id': cast_member['id']}, {'$set': cast_entry}, upsert=True)
+
+            cast_member_list.append((cast_member['id'], cast_member[Cast.CHARACTER_NAME]))
+
+        return cast_member_list
+
+    def get_cast_member(self, cast_id: int) -> dict:
+        return self.cast.find_one({"_id": cast_id})
 
     def read_config(self, field_name):
         self.config.read(

@@ -1,5 +1,4 @@
 import sys
-import pathlib
 
 from PyQt6.QtWidgets import QApplication
 

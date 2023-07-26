@@ -1,22 +1,22 @@
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (QSplitter, QListWidget, QLabel,
                              QVBoxLayout, QHBoxLayout, QWidget, QTabWidget, QFileDialog,
                              QPushButton, QLineEdit, QComboBox, QListWidgetItem,
                              QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView, QDialog, QSpinBox,
-                             QScrollArea, QFormLayout)
+                             QScrollArea, QFormLayout, QSizePolicy)
 
+from GUI.CastItem import CastItem
 from GUI.DirectoryDialog import RecursiveDialog
 from InformationGrabbers.get_tmdb_data import make_tmdb_call
-from MovieDatabase import MovieDatabase
+from MovieDatabase import MovieDatabase, Cast
 from InformationGrabbers.file_info import get_movies_from_directory
 from MovieDatabase import MovieInfo
+from GUI.InfoScrollers import create_info_scroller_layout
 
-import cProfile
-import pstats
-import webbrowser
+CAST_WIDGET_COUNT = 100
 
 
 class MainWindow(QWidget):
@@ -39,7 +39,7 @@ class MainWindow(QWidget):
             MovieInfo.LANGUAGE: False,
             MovieInfo.TITLE_ORIG: True,
             MovieInfo.TITLE_CUR: False,
-            MovieInfo.OVERVIEW: True,
+            MovieInfo.PLOT: True,
             MovieInfo.POPULARITY: False,
             MovieInfo.PRODUCTION_COMPANY: False,
             MovieInfo.PRODUCTION_COUNTRY: False,
@@ -64,7 +64,7 @@ class MainWindow(QWidget):
         self.movieList = None  # list of movies in the main page.
         self.plotLabel = None
         self.posterLabel = None
-        self.titleLabel = None
+        self.titleLabel = QLabel()
         self.taglineLabel = None
         self.cast_widget = None
         self.cast_scroll = None
@@ -74,6 +74,11 @@ class MainWindow(QWidget):
         self.images_location_button = None
         self.settings_file_location_button = None
         self.settings_file_location = None
+
+        self.info_scroller_references = None
+        self.cast_scroll_layout = None
+        self.cast_widget_items = [CastItem() for _ in range(CAST_WIDGET_COUNT)]  # create CAST_WIDGET_COUNT number of CastItem objects
+
         self.setWindowTitle('Movie Viewer')
         self.setGeometry(500, 500, 550, 350)
 
@@ -122,17 +127,25 @@ class MainWindow(QWidget):
         # Poster, tagline, and plot
         poster_tagline_layout = QHBoxLayout()
 
+        poster_layout = QVBoxLayout()
         self.posterLabel = QLabel("Poster")  # Should display an image
-        poster_tagline_layout.addWidget(self.posterLabel)
+        self.posterLabel.setScaledContents(True)
+        self.posterLabel.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.posterLabel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        poster_layout.addWidget(self.posterLabel)
 
-        self.taglineLabel = QLabel("Tagline")
-        self.plotLabel = QLabel("Plot")
+        poster_tagline_layout.addLayout(poster_layout, 1)
 
         tagline_plot_layout = QVBoxLayout()
+        self.taglineLabel = QLabel("Tagline")
+        self.taglineLabel.setWordWrap(True)
+        self.plotLabel = QLabel("Plot")
+        self.plotLabel.setWordWrap(True)
         tagline_plot_layout.addWidget(self.taglineLabel)
         tagline_plot_layout.addWidget(self.plotLabel)
 
-        poster_tagline_layout.addLayout(tagline_plot_layout)
+        poster_tagline_layout.addLayout(tagline_plot_layout, 3)
+
         main_layout.addLayout(poster_tagline_layout)
 
         # Other movie info and cast
@@ -140,12 +153,22 @@ class MainWindow(QWidget):
 
         self.movie_info_scroll = QScrollArea()
         self.movie_info_widget = QWidget()  # Populate with movie info widgets
+        self.movie_info_widget.setToolTip('Movie Info')
+        scroller_layout, self.info_scroller_references = create_info_scroller_layout(self.movie_display_settings)
+        self.movie_info_widget.setLayout(scroller_layout)
         self.movie_info_scroll.setWidget(self.movie_info_widget)
         self.movie_info_scroll.setWidgetResizable(True)
         info_cast_layout.addWidget(self.movie_info_scroll)
 
         self.cast_scroll = QScrollArea()
         self.cast_widget = QWidget()  # Populate with cast widgets (e.g., QLabels with images and text)
+        self.cast_widget.setToolTip('Cast')
+        # we can include pre-defined cast objects here after we determine performance impacts.
+        self.cast_scroll_layout = QHBoxLayout()
+        for each in self.cast_widget_items:
+            each.setVisible(False)
+            self.cast_scroll_layout.addWidget(each)
+        self.cast_widget.setLayout(self.cast_scroll_layout)
         self.cast_scroll.setWidget(self.cast_widget)
         self.cast_scroll.setWidgetResizable(True)
         info_cast_layout.addWidget(self.cast_scroll)
@@ -154,13 +177,13 @@ class MainWindow(QWidget):
 
         self.movieInfo.setLayout(main_layout)
 
-        info_scroll = QScrollArea()
-        info_scroll.setWidgetResizable(True)
-        info_scroll.setWidget(self.movieInfo)
+        # info_scroll = QScrollArea()
+        # info_scroll.setWidgetResizable(True)
+        # info_scroll.setWidget(self.movieInfo)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.movieList)
-        splitter.addWidget(info_scroll)
+        splitter.addWidget(self.movieInfo)
 
         tab_layout = QVBoxLayout()
         tab_layout.addWidget(splitter)
@@ -308,10 +331,57 @@ class MainWindow(QWidget):
 
     def show_movie_info(self, item):
         movie = item.text()
-        print(movie)
-        # assuming make_tmdb_call is a function that retrieves a movie info from TMDb
-        # info = make_tmdb_call(movie)  # more complicated as we need to add elements that will show us what we want.
-        # self.movieInfo.setText(movie)  # TODO need to change to populate with movie info.
+
+        # Get the movie info
+        movie_info = self.db.get_movie(movie)
+
+        if not movie_info:
+            print(f"No information found for movie {movie}")
+            return
+
+        # Get the misc_info sub-dictionary, which contains most of the relevant fields
+        misc_info = movie_info.get("misc_info", {})
+
+        # set title
+        self.titleLabel.setText(misc_info.get(MovieInfo.TITLE_CUR.value))
+        # end setting title
+
+        # set poster image
+        image_paths = self.db.get_images(movie).get('images')
+        poster_path = None
+        if image_paths is not None:
+            poster_path = image_paths.get(MovieInfo.POSTER.value)
+        if poster_path is not None:
+            pixmap = QPixmap(poster_path)
+            pixmap = pixmap.scaled(self.posterLabel.width(), self.posterLabel.height(),
+                                   aspectRatioMode=Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+            self.posterLabel.setPixmap(pixmap)
+        # end setting poster image
+
+        # set the tagline and plot
+        self.taglineLabel.setText(misc_info.get(MovieInfo.TAGLINE.value))
+        self.plotLabel.setText(misc_info.get(MovieInfo.PLOT.value))
+        # end setting tagline and plot
+
+        # set info scroller text
+        for info_enum, gui_label in self.info_scroller_references.items():
+            gui_label.setText(f"{info_enum.name}: {misc_info.get(info_enum.value)}")
+
+        # end setting info scroller text
+
+        # set cast info
+
+        cast_info = movie_info.get('cast')
+        for i in range(100):
+            if i < len(cast_info):
+                cast_id, character_name = cast_info[i]
+                member_info = self.db.get_cast_member(cast_id)
+                self.cast_widget_items[i].update_info(member_info[Cast.NAME_NOW], character_name, member_info[Cast.HEADSHOT])
+                self.cast_widget_items[i].setVisible(True)
+            else:
+                self.cast_widget_items[i].setVisible(False)
+
+        # end setting cast
 
 
 class DirectoryItem(QTreeWidgetItem):
