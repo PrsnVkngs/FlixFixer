@@ -10,8 +10,10 @@ from enum import Enum
 from pymongo import MongoClient
 
 from InformationGrabbers.file_info import get_res_codec
-from InformationGrabbers.get_tmdb_data import get_tmdb_id, make_tmdb_call, compile_cast
+from InformationGrabbers.get_tmdb_data import get_tmdb_id, make_tmdb_call, compile_cast, get_movie_name
 from InformationGrabbers.metadata import get_track_info
+
+from Concurrency.ConcurrentRequests import ConcurrentRequests
 
 
 class MovieInfo(str, Enum):
@@ -85,13 +87,16 @@ searchable_info = (MovieInfo.ADULT, MovieInfo.GENRES, InternalInfo.RESOLUTION, I
 
 
 class MovieDatabase:
-    def __init__(self, db_url, db_name):
+    def __init__(self, db_url, db_name, async_requester: ConcurrentRequests):
         client = MongoClient(db_url)
         self.db = client[db_name]
         self.movies = self.db['movies']
         self.directories = self.db['directories']
         self.images = self.db['images']
         self.cast = self.db['actors']
+        self.seen_before = self.db['movie_ids']
+
+        self.batch_requester = async_requester
 
         self.config = configparser.ConfigParser()
         self.settings_path = None
@@ -121,8 +126,14 @@ class MovieDatabase:
 
         if tmdb_id:
             tmdb_id = int(tmdb_id)
+        else:
+            movie_name = get_movie_name(file_path)
+            if movie_name:
+                tmdb_id = self.seen_before.find_one({'_id': movie_name})
 
         if self.movies.find_one({'_id': tmdb_id}) and not force_update:
+            # print(f"Skipped the movie {file_path}")
+            # TODO probably need to introduce another level, so if its not in the movie file, but we've seen it before, we should create a collection in our mongodb that stores the tmdbids of movies we've seen before.
             return
 
         # Extract TMDB ID and other metadata from the file

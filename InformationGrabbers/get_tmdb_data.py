@@ -33,6 +33,7 @@ genre_dictionary = {
 }
 
 tmdbid_pattern = re.compile(r'(?<=\=)[0-9]*')
+movie_name_pattern = re.compile(r"(.*?)\(")
 
 
 def make_tmdb_call(movie_name: str | int) -> dict | None:
@@ -197,5 +198,17 @@ def get_tmdb_id(movie: Path | str) -> int | None:
     return tmdb_id
 
 
+def get_movie_name(movie: Path | str) -> str | None:
+    if isinstance(movie, Path):
+        movie = str(movie.name)
+
+    movie_name = re.search(movie_name_pattern, movie)
+    if movie_name:
+        movie_name = movie_name.group(0)
+        movie_name = movie_name[:-1]
+
+    return movie_name.strip()
+
+
 if __name__ == '__main__':
-    print(get_tmdb_id(Path("Arkham (2022) [tmdbid].mkv")))
+    print(get_movie_name(Path("Arkham Asylum  (2022) [tmdbid].mkv")))

@@ -4,13 +4,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (QSplitter, QListWidget, QLabel,
                              QVBoxLayout, QHBoxLayout, QWidget, QTabWidget, QFileDialog,
-                             QPushButton, QLineEdit, QComboBox, QListWidgetItem,
-                             QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView, QDialog, QSpinBox,
+                             QPushButton, QLineEdit, QComboBox, QTreeWidgetItem, QTreeWidget, QHeaderView, QAbstractItemView, QDialog, QSpinBox,
                              QScrollArea, QFormLayout, QSizePolicy)
 
 from GUI.CastItem import CastItem
 from GUI.DirectoryDialog import RecursiveDialog
-from InformationGrabbers.get_tmdb_data import make_tmdb_call
 from MovieDatabase import MovieDatabase, Cast
 from InformationGrabbers.file_info import get_movies_from_directory
 from MovieDatabase import MovieInfo
@@ -265,7 +263,8 @@ class MainWindow(QWidget):
         self.settingsTab.setLayout(settings_layout)
 
     def browse_for_settings_file(self):
-        file_name = QFileDialog.getOpenFileName(self, 'Select Settings Folder')
+        file_name = QFileDialog.getExistingDirectory(self, 'Select Settings Folder')
+        print(file_name)
         if file_name:
             self.settings_file_location.setText(file_name)
             self.db.set_config('settings_location', file_name)
